@@ -1,0 +1,27 @@
+{
+  "delhi": {
+    "temperature": "temperature_2m (°C)",
+    "relative_humidity": "relative_humidity_2m (%)",
+    "dew_point": "dew_point_2m (°C)",
+    "apparent_temperature": "apparent_temperature (°C)",
+    "precipitation": "precipitation (mm)",
+    "rainfall": "rain (mm)",
+    "snowfall": "snowfall (cm)",
+    "wind_speed": "wind_speed_10m (km/h)"
+  },
+  "historical": {
+    "temperature": "temp",
+    "relative_humidity": "hum",
+    "dew_point": "dew",
+    "apparent_temperature": "app_t",
+    "precipitation": "precip",
+    "rainfall": "rain",
+    "snowfall": "snow"
+  },
+  "cities2025": {
+    "temperature": "temp",
+    "relative_humidity": "hum",
+    "precipitation": "precip",
+    "wind_speed": "wind"
+  }
+}
