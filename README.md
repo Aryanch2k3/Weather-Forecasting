@@ -1,7 +1,7 @@
 
 # 🌦️ Weather Forecasting Using High-Performance Computing (HPC)
 
-**Real Delhi weather-data analysis with Serial C, OpenMP, NVIDIA CUDA, and an interactive Streamlit performance dashboard.**
+**Weather-data analysis with Serial C, OpenMP, NVIDIA CUDA, and an interactive Streamlit performance dashboard.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2011-0078D4?style=flat-square)
 ![Language](https://img.shields.io/badge/CPU-Serial%20C%20%7C%20OpenMP-2563EB?style=flat-square)
