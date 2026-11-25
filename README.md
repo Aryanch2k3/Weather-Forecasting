@@ -1,212 +1,368 @@
-
 # 🌦️ Weather Forecasting Using High-Performance Computing (HPC)
 
-**Weather-data analysis with Serial C, OpenMP, NVIDIA CUDA, and an interactive Streamlit performance dashboard.**
+**Real historical weather analysis for New Delhi using Serial C, OpenMP, NVIDIA CUDA, Pearson correlation, and an interactive Streamlit dashboard.**
 
-![Platform](https://img.shields.io/badge/Platform-Windows%2011-0078D4?style=flat-square)
-![Language](https://img.shields.io/badge/CPU-Serial%20C%20%7C%20OpenMP-2563EB?style=flat-square)
-![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=flat-square)
-![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?style=flat-square)
-![Data](https://img.shields.io/badge/Data-Open--Meteo-0F766E?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Windows%2011-0078D4?logo=windows11&logoColor=white)
+![CPU](https://img.shields.io/badge/CPU-Serial%20C%20%7C%20OpenMP-2563EB)
+![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?logo=nvidia&logoColor=white)
+![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![Dataset](https://img.shields.io/badge/Data-Open--Meteo-159895)
 
-> **Project scope:** This application performs **statistical analysis of historical weather records** and measures the acceleration obtained through high-performance computing. It is **not yet a trained, validated model for predicting future weather**. The title reflects the wider weather-forecasting application domain.
+> **Scientific scope:** Despite the project title, the implemented application analyzes **historical weather records**, quantifies **CPU/GPU computation performance**, and explores **correlations between meteorological variables**. It does **not** currently train a model that forecasts tomorrow's weather or report forecast-prediction accuracy.
 
-**🏁 Benchmark highlight (supplied dashboard export):** Serial C **47.250 ms** → CUDA Shared Memory **4.200 ms** (**11.25×** compute-only speedup). Eight-thread OpenMP reached **14.846 ms** (**3.18×**). See [measured performance results](#measured-performance-results) for the full table and timing limitations.
+## Project at a glance
 
-## Table of contents
+| Item | Description |
+|---|---|
+| Project domain | Weather-data analytics and High-Performance Computing (HPC) |
+| Location | New Delhi, India (approximately 28.576448° N, 77.186780° E) |
+| Source | [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api) |
+| Time zone | Asia/Kolkata |
+| Period shown in current dashboard | 2010–2025; verify exact timestamps against the local CSV |
+| Meteorological variables | **8** |
+| Execution methods | **4**: Serial C, OpenMP, CUDA Atomic, CUDA Shared Memory |
+| Correlation method | Pairwise **Pearson product–moment correlation** (Pandas/NumPy) |
+| Correlation comparisons | **8 × 8 matrix; 28 distinct cross-parameter pairs** |
+| Dashboard | Streamlit + Plotly, with the original dark navy/teal theme |
+| Tested project GPU | NVIDIA GeForce GTX 1650 (`sm_75`) |
+| Development environment | Windows 11, VS Code, MSVC C compiler, NVIDIA CUDA Toolkit |
 
-1. [Overview](#overview)
-2. [Main features](#main-features)
-3. [Real weather dataset](#real-weather-dataset)
-4. [How the system works](#how-the-system-works)
-5. [Technologies and requirements](#technologies-and-requirements)
-6. [Installation on Windows 11](#installation-on-windows-11)
-7. [How to run each implementation](#how-to-run-each-implementation)
-8. [Benchmarking and scaling experiments](#benchmarking-and-scaling-experiments)
-9. [Measured performance results](#measured-performance-results)
-10. [Weather analysis results](#weather-analysis-results)
-11. [Streamlit dashboard](#streamlit-dashboard)
-12. [Validation and testing](#validation-and-testing)
-13. [Project structure](#project-structure)
-14. [Exports](#exports)
-15. [Troubleshooting](#troubleshooting)
-16. [Limitations and future work](#limitations-and-future-work)
-17. [References and acknowledgements](#references-and-acknowledgements)
+A continuous one-location hourly series from **2010-01-01 through 2025-12-31** contains **140,256 possible timestamps** (including leap days). That is also the number shown in the recent dashboard screenshot. Actual source rows, missing timestamps, and usable records should always be confirmed from `data/prepared_delhi.json` or `results/summary.json`, rather than inferred from a heading.
 
 ---
 
-## Overview
+## Table of contents
 
-Analyzing long-term meteorological datasets requires the same calculations to be repeated over many observations and variables. This project compares four implementations of **the same eight-parameter statistical workload**:
+1. [Overview and objectives](#overview-and-objectives)
+2. [Key features](#key-features)
+3. [System architecture](#system-architecture)
+4. [Dataset and preprocessing](#dataset-and-preprocessing)
+5. [HPC computation and algorithms](#hpc-computation-and-algorithms)
+6. [New feature: correlation between eight parameters](#new-feature-correlation-between-eight-parameters)
+7. [Interactive dashboard](#interactive-dashboard)
+8. [Technology stack and requirements](#technology-stack-and-requirements)
+9. [Install and run on Windows 11](#install-and-run-on-windows-11)
+10. [Run the native algorithms](#run-the-native-algorithms)
+11. [Benchmark methodology and measured results](#benchmark-methodology-and-measured-results)
+12. [Correlation calculation and interpretation](#correlation-calculation-and-interpretation)
+13. [Validation and reproducibility](#validation-and-reproducibility)
+14. [Project structure](#project-structure)
+15. [Output files and sharing](#output-files-and-sharing)
+16. [Troubleshooting](#troubleshooting)
+17. [Limitations and future improvements](#limitations-and-future-improvements)
+18. [References and acknowledgements](#references-and-acknowledgements)
 
-| Implementation | Processing hardware | Approach |
-|---|---|---|
-| **Serial C** | CPU, one thread | Sequential scan; reference result and baseline time |
-| **OpenMP** | Multicore CPU | Parallel loop with thread-local reductions and merging |
-| **CUDA Atomic** | NVIDIA GPU | Threads accumulate into global sums, squares, and counts using atomics |
-| **CUDA Shared Memory** | NVIDIA GPU | Threads reduce values inside blocks before fewer global atomic updates |
+---
 
-For each weather parameter, the programs calculate the **valid observation count, sum, sum of squares, mean, and population standard deviation**. A Python benchmark runner checks the parallel results against Serial C, collects repeat measurements, and produces interactive plots with Streamlit.
+## Overview and objectives
 
-The project runs natively on **Windows 11 through Visual Studio Code's PowerShell terminal**, with GPU acceleration tested on an **NVIDIA GeForce GTX 1650**.
+Meteorological datasets contain many measurements over time. Even simple operations become computationally relevant when performed repeatedly on large inputs or across multiple parallel configurations. This project investigates the performance of **statistical reductions over real hourly weather observations**, using a common workload for four CPU/GPU implementations.
 
-## Main features
+The major objectives are to:
 
-- **Genuine historical Delhi weather data** imported from Open-Meteo CSV; no artificial temperature grids or fabricated records in the benchmarking pipeline.
-- **Eight meteorological parameters:** temperature, relative humidity, dew point, apparent temperature, precipitation, rainfall, snowfall, and wind speed.
-- **Serial C baseline** and configurable **OpenMP** CPU thread counts (for example, 1, 2, 4, and 8).
-- **Two different CUDA kernels:** global atomic accumulation and shared-memory/block reduction.
-- **Matched inputs and output validation** across CPU and GPU methods, including missing-value checks.
-- **Execution time, compute-only speedup, GPU transfer-inclusive timing, and OpenMP efficiency**.
-- **Strong scaling:** hold the number of actual input rows fixed and vary the OpenMP thread count.
-- **Dataset-size scaling:** analyze progressively larger *real* subsets of the CSV, including its full usable size.
-- **Repeat benchmarking** with median timings to reduce the impact of unusual individual runs.
-- **Streamlit dashboard** with readable charts, weather statistics, historical trends, validation details, and downloads.
-- **CSV, JSON, and interactive HTML exports** (HTML can be printed to PDF).
-- **Windows setup checker, automated tests, and one-command demonstration script**.
+- Process an authentic Delhi historical weather CSV, rather than create synthetic weather grids.
+- Calculate valid counts, means and population standard deviations for eight parameters.
+- Implement and compare Serial C, multi-threaded OpenMP, CUDA global atomic reduction and CUDA shared-memory reduction.
+- Verify that the execution methods produce numerically consistent results from identical inputs.
+- Measure execution time, speedup, CPU-thread efficiency and scaling over real input sizes.
+- **Analyze how all eight meteorological parameters relate to each other using Pearson correlation**, with a complete matrix and interactive graphics.
+- Present the results through a readable Streamlit application.
 
-## Real weather dataset
+This project combines two complementary kinds of analysis:
 
-**Provider:** [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)  
-**Geographic area:** New Delhi, India; approximately **28.576448° N, 77.186780° E**, elevation approximately **214 m**  
-**Time zone:** `Asia/Kolkata`  
-**Historical coverage:** the current project dashboard is labelled **2010–2025**. The **actual first/last timestamps and record count must be read from your current CSV**—not from a manually edited dashboard heading.
+1. **HPC benchmarking** asks *how quickly* each implementation computes the weather statistics.
+2. **Weather correlation analysis** asks *how strongly* two measured weather variables vary together.
 
-Open-Meteo historical products are **model-derived/reanalysis-based geographic weather data**; they should not automatically be described as direct measurements from a specific physical weather station.
+The correlation module is an **additional Pandas/NumPy-based analysis**. It is **not** currently another CUDA kernel, and its runtime must not be included in the reported CUDA speedups.
 
-### Eight analyzed parameters
+## Key features
 
-| # | Weather parameter | Typical Open-Meteo CSV column | Analysis unit |
-|---:|---|---|---|
-| 1 | Air temperature | `temperature_2m (°C)` | °C |
-| 2 | Relative humidity | `relative_humidity_2m (%)` | % |
-| 3 | Dew point | `dew_point_2m (°C)` | °C |
-| 4 | Apparent temperature | `apparent_temperature (°C)` | °C |
-| 5 | Precipitation | `precipitation (mm)` | mm per hourly record |
-| 6 | Rainfall | `rain (mm)` | mm per hourly record |
-| 7 | Snowfall | `snowfall (cm)` | cm per hourly record |
-| 8 | Wind speed at 10 m | `wind_speed_10m (km/h)` | **m/s**, converted from km/h |
+- Actual Open-Meteo hourly weather records, with source provenance and unit handling.
+- Eight-variable summary statistics: mean, standard deviation, valid count, and coverage.
+- Native C single-thread reference implementation.
+- OpenMP execution with configurable CPU threads (e.g., 1, 2, 4, 8).
+- Two CUDA reduction strategies: global atomics and block-level shared memory.
+- Automatic numerical comparison of parallel results with the Serial C baseline.
+- Repeated benchmarks summarized with median timings.
+- Strong-scaling and dataset-size-scaling plots.
+- Interactive dark-navy Streamlit dashboard, retaining its original style.
+- **Complete eight-variable Pearson correlation matrix, 28 unique parameter-pair comparisons, ranked correlations, scatter explorer and correlation CSV downloads.**
+- Handling of unavailable, nonfinite, missing, or constant-valued weather parameters without inventing readings.
 
-**Preprocessing rules:**
+## System architecture
 
-1. Detect the original header (Open-Meteo CSV downloads commonly contain **three metadata/blank lines** before the tabular header).
-2. Resolve recognized columns by their names, rather than assuming a fixed column position.
-3. Convert numerical values to a consistent **eight-column, row-major float32** representation.
-4. Convert wind speed from **km/h to m/s** using `wind_speed_m_s = wind_speed_km_h / 3.6` where appropriate.
-5. Preserve missing or invalid values as `NaN`; calculations **skip missing values**, not replace them with fabricated zeros.
-6. Keep only records with at least one usable analyzed value, and record exactly how many rows were skipped.
-7. Save `data/prepared_delhi.f32` and `data/prepared_delhi.json` for consistent CPU/GPU analysis.
+```mermaid
+flowchart TD
+    A[Open-Meteo Delhi historical CSV] --> B[Python preprocessing]
+    B --> C[8-column row-major float32 records]
+    B --> M[Source / column metadata]
+    C --> D[Serial C]
+    C --> E[OpenMP CPU]
+    C --> F[CUDA Atomic GPU]
+    C --> G[CUDA Shared Memory GPU]
+    D --> H[Benchmark + correctness validation]
+    E --> H
+    F --> H
+    G --> H
+    H --> I[Performance CSV / JSON / HTML results]
+    C --> J[Pandas / NumPy Pearson correlation]
+    J --> K[8 x 8 matrix + 28 pairs]
+    I --> L[Streamlit + Plotly dashboard]
+    K --> L
+    M --> L
+```
 
-**Important record-count note:** A continuous **single-location, once-per-hour** series from **1 January 2010 through 31 December 2025** would contain **140,256 timestamps** before considering duplicates or gaps. A manually entered dashboard label of **400,256 records** is not proof of 400,256 distinct hourly observations. Use `rows_csv`, `rows_used`, and `first_timestamp` / `last_timestamp` from the preprocessing metadata as authoritative project counts. If the CSV contains a different time span or multiple locations, describe that explicitly.
+**Separate processing branches:** The C/OpenMP/CUDA engines compute single-variable summary statistics, while the correlation module reads the same real prepared weather rows (or reconstructs them from the CSV when necessary) and computes pairwise relationships. Both are displayed in the same Streamlit application.
 
-### Obtaining and configuring the CSV
+## Dataset and preprocessing
 
-1. Visit [Open-Meteo Historical Weather](https://open-meteo.com/en/docs/historical-weather-api).
-2. Use the Delhi coordinates and select the date range, such as **2010-01-01 to 2025-12-31**, and the eight fields above.
-3. Export **hourly data as CSV** and place it in `data/`.
-4. Open `scripts/prepare_data.py` and ensure the `FILES` dictionary points to the exact downloaded filename, for example:
+### Source and eight weather parameters
+
+The current dashboard is configured for the **New Delhi Open-Meteo historical weather dataset**, labelled **2010–2025**. Open-Meteo's historical weather service supplies location-based **model-derived / reanalysis-type historical weather data**; it should not automatically be described as measurements from one physical weather station.
+
+| # | Internal variable | Display name | Original Open-Meteo field (typical) | Analysis unit |
+|---:|---|---|---|---|
+| 1 | `temperature` | Temperature | `temperature_2m (°C)` | °C |
+| 2 | `relative_humidity` | Relative Humidity | `relative_humidity_2m (%)` | % |
+| 3 | `dew_point` | Dew Point | `dew_point_2m (°C)` | °C |
+| 4 | `apparent_temperature` | Apparent Temperature | `apparent_temperature (°C)` | °C |
+| 5 | `precipitation` | Precipitation | `precipitation (mm)` | mm per hourly record |
+| 6 | `rainfall` | Rainfall | `rain (mm)` | mm per hourly record |
+| 7 | `snowfall` | Snowfall | `snowfall (cm)` | cm per hourly record |
+| 8 | `wind_speed` | Wind Speed | `wind_speed_10m (km/h)` | **m/s** after conversion |
+
+The original data may include more columns, but these are the **eight variables actually processed by the project**. The mapping depends on the input CSV headers and is recorded in the generated metadata.
+
+### Preprocessing procedure
+
+The script `scripts/prepare_data.py`:
+
+1. Reads the Open-Meteo CSV, handling preliminary metadata lines if present.
+2. Maps source column names to the eight canonical internal variables.
+3. Converts each weather field to numeric data; invalid/missing values become `NaN`.
+4. Converts wind speed from **km/h to m/s** when required (`wind_speed_ms = wind_speed_kmh / 3.6`).
+5. Preserves valid zero measurements, such as genuinely zero snowfall.
+6. Removes a record only when **all eight** analyzed measurements are missing.
+7. Writes a contiguous row-major binary array of **eight float32 values per retained record**, plus source metadata.
+
+Example generated files:
+
+```text
+data/prepared_delhi.f32     # Actual prepared numerical input for C/OpenMP/CUDA
+data/prepared_delhi.json    # Original CSV, timestamp coverage, mappings, counts, units
+```
+
+Each retained weather record takes `8 × 4 = 32 bytes` in the `.f32` matrix, excluding metadata. Missing measurements remain distinguishable as `NaN`.
+
+**Input consistency:** The correlation dashboard prefers `prepared_delhi.f32` when it is current and matches the benchmark metadata. Otherwise it rebuilds the same eight-column numerical representation from the source CSV. It does **not** create fake extra weather records to fill a requested size.
+
+### Obtain the CSV yourself
+
+1. Open [Open-Meteo Historical Weather](https://open-meteo.com/en/docs/historical-weather-api).
+2. Select the Delhi coordinates and the requested date interval, e.g. **2010-01-01 to 2025-12-31**, with hourly variables matching the table above.
+3. Download the **CSV** and place it in your project's `data/` directory.
+4. In `scripts/prepare_data.py`, update the value for `FILES['delhi']` to match the **exact filename** you downloaded.
+
+For example:
 
 ```python
 FILES = {
-    'delhi': 'YOUR_EXACT_DELHI_CSV_FILENAME.csv',
+    'delhi': 'YOUR_DELHI_OPEN_METEO_FILE.csv',
     'historical': 'merged_weather_data_2019_2024.csv',
     'cities2025': 'India_70_Cities_weather_2025_Final.csv',
 }
 ```
 
-The earlier working file was called `open-meteo-28.58N77.19E214m(2).csv`; **use the actual name of your current 2010–2025 download instead**. Keep the dataset key `'delhi'` unchanged because other scripts refer to that key. If you change the filename, also update `scripts/check_setup.py` if it still checks the old name.
+The earlier project source used `open-meteo-28.58N77.19E214m(2).csv`, covering **2019-01-05 to 2025-12-19**. That **earlier file is not the 2010–2025 file** shown in the current dashboard. Do not combine correlation coefficients calculated from one coverage interval with benchmark or weather records from another without identifying the difference.
 
-The project's `.gitignore` intentionally excludes `data/*.csv`, prepared binary data, and generated benchmark outputs. **A GitHub clone therefore needs its own CSV download**, unless you separately choose to publish an appropriately licensed dataset.
+## HPC computation and algorithms
 
-## How the system works
+### 1. Serial C
 
-```mermaid
-flowchart TD
-    A[Real Delhi Open-Meteo CSV] --> B[prepare_data.py]
-    B --> C[Clean columns, normalize units, preserve NaN]
-    C --> D[8-value float32 records + metadata]
-    D --> E[Serial C]
-    D --> F[OpenMP]
-    D --> G[CUDA Atomic]
-    D --> H[CUDA Shared Memory]
-    E --> I[benchmark.py]
-    F --> I
-    G --> I
-    H --> I
-    I --> J[Validate counts and means]
-    J --> K[CSV / JSON / interactive HTML]
-    K --> L[Streamlit dashboard]
+Sequentially scans the prepared weather rows, accumulating eight independent sums, sums of squares, and valid counts. This is the **correctness baseline** and reference execution time.
+
+### 2. OpenMP
+
+Divides input records across CPU worker threads. Thread-local partial statistics are combined through reductions. Varying the thread count shows the benefit and overhead of CPU parallelism.
+
+### 3. CUDA Atomic
+
+GPU threads process weather observations and update global accumulators using atomic operations. This is a straightforward GPU implementation, but many updates to the same variables can increase contention.
+
+### 4. CUDA Shared Memory
+
+Threads aggregate partial results inside CUDA blocks, then make fewer global updates. It illustrates how changing the reduction strategy can substantially improve measured GPU performance.
+
+### Common statistical formulas
+
+For a weather parameter `j`, considering only its `C_j` valid observations:
+
+$$
+S_j=\sum_{i\in\mathrm{valid}(j)}x_{ij},\qquad
+Q_j=\sum_{i\in\mathrm{valid}(j)}x_{ij}^{2}
+$$
+
+$$
+\mu_j=\frac{S_j}{C_j},\qquad
+\sigma_j=\sqrt{\max\left(0,\frac{Q_j}{C_j}-\mu_j^2\right)}
+$$
+
+The reported standard deviation is the **population standard deviation**. If `C_j = 0`, the average and standard deviation are unavailable, not zero. Parallel reduction order may introduce small floating-point differences, so validity is checked with an appropriate numerical tolerance.
+
+## New feature: correlation between eight parameters
+
+A dedicated **Correlation** tab was added directly after **Real weather measurements**. It reveals linear relationships among every pair of the eight historical weather variables.
+
+### What is measured?
+
+For variables `X` and `Y`, the dashboard computes the **Pearson correlation coefficient**:
+
+$$
+r_{XY}=\frac{\sum_{i=1}^{n}(x_i-\bar{x})(y_i-\bar{y})}
+{\sqrt{\sum_{i=1}^{n}(x_i-\bar{x})^2}\sqrt{\sum_{i=1}^{n}(y_i-\bar{y})^2}}
+$$
+
+Only records where **both** chosen parameters are valid are included (*pairwise deletion*). Correlation is between `−1` and `+1` when defined:
+
+| Pearson coefficient | Interpretation |
+|---|---|
+| Close to `+1` | Strong positive linear association |
+| Close to `−1` | Strong negative linear association |
+| Close to `0` | Weak or no **linear** association |
+| `N/A` / `NaN` | Undefined (e.g., constant column, insufficient matched values) |
+
+**Correlation does not establish causation.** A coefficient close to zero does not rule out a nonlinear association.
+
+### Why 28 parameter pairs?
+
+Eight variables produce an **8 × 8 correlation matrix** with 64 cells (including self-correlations and mirrored pairs), but the number of *unique pairs of different parameters* is:
+
+$$
+\binom{8}{2}=\frac{8\times7}{2}=28
+$$
+
+The current Delhi dashboard has shown **21 defined pairs out of 28**. In that dataset, **snowfall is constant (zero)**, so its seven distinct pairs with other parameters have undefined Pearson correlations. The other 21 unique pairs are defined. The actual number can change if a different dataset or parameter coverage is used.
+
+**Correct handling:** The application keeps snowfall as one of the eight parameters and marks its correlations **`N/A`**, rather than replacing mathematically undefined correlations with `0` or removing snowfall entirely.
+
+### Visualizations in the Correlation tab
+
+| Visualization | Functionality |
+|---|---|
+| **8 × 8 heatmap** | All eight parameters on both axes; annotated Pearson `r` values; positive/negative gradient; `N/A` for undefined entries; hover details include valid paired counts |
+| **Correlation summary cards** | Actual observations used, defined-pair count, strongest positive coefficient, strongest negative coefficient |
+| **Strongest relationships chart** | Ranked horizontal bars for positive and negative associations; select how many pairs to display |
+| **Two-parameter scatter explorer** | Choose any two variables for X and Y axes; inspect actual hourly records and an optional least-squares trend line |
+| **All-pairs table** | Full list of 28 unique pairs, coefficient, paired valid row count and interpretation |
+| **Pairwise count matrix** | Number of records jointly available for each pair of parameters |
+| **CSV download buttons** | Export the full correlation matrix and all 28 unique pairs |
+
+**Graph interpretation:** Teal-colored bars indicate positive relationships; magenta-colored bars indicate negative relationships. Missing / constant columns are explicitly marked unavailable. Plot colors follow the dashboard's navy, blue and teal visual design.
+
+### Scatter plot sampling is only for readability
+
+The scatter chart can display a limited number of points (typically between **500 and 5,000**), because drawing every hourly point can clutter the display. **Pearson `r` and the fitted linear trend use all valid paired rows**, not merely the displayed sample. No interpolated or generated observations are added.
+
+### Where is the implementation?
+
+The new feature is **inside the main `dashboard.py`**:
+
+| Function | Role |
+|---|---|
+| `load_correlation_weather()` | Loads the prepared float32 weather matrix, or reconstructs real rows from the source CSV |
+| `compute_weather_correlation()` | Computes the full Pearson matrix, pairwise valid counts, 28 pair records and qualitative strength labels |
+| `show_correlation_section()` | Displays the KPI cards, interactive heatmap, ranking bars, scatter explorer, data tables and CSV downloads |
+
+A simplified version of the core computation is:
+
+```python
+# The weather DataFrame uses these exact eight columns.
+columns = [
+    'temperature', 'relative_humidity', 'dew_point',
+    'apparent_temperature', 'precipitation', 'rainfall',
+    'snowfall', 'wind_speed',
+]
+
+numeric = weather_df[columns].astype('float64')
+correlation_matrix = numeric.corr(method='pearson', min_periods=3)
+valid_flags = numeric.notna().astype('int64')
+paired_counts = valid_flags.T.dot(valid_flags)
 ```
 
-### Mathematical workload
+The production code additionally checks prepared-file size, freshness, source mappings and actual benchmark row counts, and handles missing/constant variables correctly.
 
-For each weather parameter \(j\), using only its \(C_j\) finite observations:
+> **Important HPC distinction:** The attached demonstration notebook inspired the correlation methodology and visual presentation, but the current project correlation tab computes **all eight real weather parameters with Pandas/NumPy**. It does **not** run the notebook's five-parameter sample matrix, perform a separate GPU correlation kernel, or claim CUDA acceleration for correlation.
 
-$$
-S_j = \sum_{i\ \mathrm{valid}} x_{ij}, \qquad
-Q_j = \sum_{i\ \mathrm{valid}} x_{ij}^{2}
-$$
+## Interactive dashboard
 
-$$
-\mu_j = \frac{S_j}{C_j}, \qquad
-\sigma_j = \sqrt{\max\!\left(0, \frac{Q_j}{C_j}-\mu_j^{2}\right)}
-$$
-
-If \(C_j=0\), the mean and standard deviation are **unavailable**, not zero. The same formulas are implemented in all four execution methods. Small floating-point differences are possible because parallel reductions can add values in a different order.
-
-**CUDA implementation detail:** The atomic kernel performs global atomic updates for valid values. The shared-memory kernel uses 256-thread blocks to combine values by their eight parameter positions before issuing fewer global atomic updates. This reduces contention; it does not guarantee the GPU is always faster for every dataset size.
-
-## Technologies and requirements
-
-| Technology | Use |
-|---|---|
-| Windows 11 | Development and benchmarking OS |
-| [VS Code](https://code.visualstudio.com/download) | Editor and PowerShell terminal |
-| [Python](https://www.python.org/downloads/windows/) | Preprocessing, automation, tests, dashboard |
-| [Visual Studio C++ tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) | MSVC compiler (`cl.exe`), Windows SDK, OpenMP |
-| [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) | GPU compilation (`nvcc`), CUDA kernels |
-| NVIDIA GeForce GTX 1650 | Demonstrated GPU, CUDA target `sm_75` |
-| NumPy and Pandas | CSV preprocessing and statistics handling |
-| Plotly and Streamlit | Interactive performance/meteorological visualizations |
-| Git | Repository cloning and version control (optional once downloaded) |
-
-### Known working Windows configuration
-
-- **Operating system:** Windows 11
-- **Editor:** Visual Studio Code (blue VS Code)
-- **GPU:** NVIDIA GeForce GTX 1650 laptop GPU
-- **CUDA:** 13.2 (`nvcc -arch=sm_75`)
-- **Host compiler:** **MSVC toolset 14.44**, installed alongside Visual Studio 2026
-- **Python:** Python 3.14.7 was used successfully for the dashboard dependencies
-
-**Compiler compatibility:** CUDA 11.7 rejected the Visual Studio 2026 host compiler. CUDA 13.2 fixed the version mismatch, but `cudafe++` initially crashed with a newer MSVC compiler; using **MSVC 14.44** allowed the CUDA project to build. The supplied `scripts/build.cmd` selects 14.44 when installed. This is a **project-specific known-good combination**, not a guarantee for every future Toolkit/compiler version.
-
-## Installation on Windows 11
-
-All commands below are for the **VS Code PowerShell terminal**. Run them **from the folder containing `dashboard.py`, `src/`, `scripts/`, and `requirements.txt`** (usually `windows_hpc/`).
-
-### 1. Clone or download the repository
+Launch with:
 
 ```powershell
-# Replace YOUR_USERNAME and YOUR_REPO with the actual GitHub address.
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd YOUR_REPO
-
-# Only if the repository has a nested windows_hpc folder:
-cd windows_hpc
-
-code .
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py
 ```
 
-If your repository root itself contains `dashboard.py` and `scripts/`, **do not run** `cd windows_hpc`.
+Then open **http://localhost:8501**.
 
-### 2. Install required desktop tools
+### Current dashboard tabs (in this exact order)
 
-- Install **Python** and ensure `py` works in PowerShell.
-- Install **Visual Studio Community / C++ Build Tools** with **Desktop development with C++** and the Windows SDK.
-- Install the **MSVC 14.44 toolset**, available through the Visual Studio Installer's individual components.
-- Install the **NVIDIA driver** and **CUDA Toolkit 13.2** for GPU builds.
-- Install VS Code extensions **C/C++** and **Python** (optional but recommended).
+| Tab | What it displays |
+|---|---|
+| **⏱️ Execution & speedup** | Compute-time leaderboard, speedup comparisons and measured results table |
+| **🌦️ Real weather measurements** | Weather means, standard deviations, coverage, historical monthly trends |
+| **🔗 Correlation** | **NEW:** 8 × 8 correlation heatmap, 28 pairs, ranked relationships, interactive scatter plots, correlation CSV downloads |
+| **📈 HPC scaling** | OpenMP CPU-thread scaling, parallel efficiency and compute time versus dataset size |
+| **📁 Files, validation & exports** | Currently the **Data Integrity** view: source CSV metadata, mappings and previews; the general export/validation sections were removed from this tab |
+
+The original design uses a **dark navy background with subtle gradients**, a blue/teal palette, metric cards, rounded graph panels and custom typography. The dashboard **does not show its former dataset-selection sidebar**: it automatically chooses **Delhi** (if available) and its **largest benchmarked real-record subset**. These are presentation-layer decisions only and do not alter the C/OpenMP/CUDA computation.
+
+Although the final tab retains its old title, **the general “Download the measured results” and “What the experiment proves” blocks have been removed**, as requested. The correlation tab retains its **own two correlation CSV download buttons**.
+
+## Technology stack and requirements
+
+| Technology | Role |
+|---|---|
+| Windows 11 + VS Code | Development and local execution |
+| C / MSVC 14.44 | Serial and OpenMP binaries |
+| OpenMP | Parallel CPU reduction |
+| CUDA Toolkit 13.2 + `nvcc` | GPU compilation and execution |
+| NVIDIA GTX 1650 (`sm_75`) | GPU used in the project configuration |
+| Python | Data preparation, automation and dashboard |
+| NumPy | Float32 weather input and float64 correlation calculations |
+| Pandas | CSV processing, missing-value handling, Pearson correlation and tables |
+| Streamlit | Interactive user interface |
+| Plotly | Heatmaps, scatter plots, bar charts and HPC performance figures |
+
+`requirements.txt` in the project includes:
+
+```text
+numpy>=1.26
+pandas>=2.2
+plotly>=5.22
+streamlit>=1.36
+```
+
+**Compiler note:** The tested Windows configuration used **MSVC 14.44** alongside **CUDA 13.2**. A newer MSVC toolset had previously caused `nvcc` compatibility/crash problems. `scripts/build.cmd` attempts to choose 14.44 if available; verify compatibility if using a different development environment.
+
+## Install and run on Windows 11
+
+Run all commands below in **VS Code PowerShell from the folder containing `dashboard.py`, `src/`, `scripts/` and `requirements.txt`** (often named `windows_hpc`).
+
+### 1. Clone/download the repository
+
+```powershell
+git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+cd YOUR_REPOSITORY
+
+# Only if your project files are nested in this folder:
+cd windows_hpc
+```
+
+Replace the placeholders with your actual repository information. If `dashboard.py` is already in the repository root, **skip the final `cd windows_hpc`**.
+
+### 2. Install prerequisites
+
+Install **Python**, Visual Studio / Build Tools with **Desktop development with C++**, compatible **MSVC 14.44** tools, the **NVIDIA GPU driver**, and **CUDA Toolkit 13.2** for GPU builds.
 
 Verify:
 
@@ -216,9 +372,7 @@ nvidia-smi
 nvcc --version
 ```
 
-`nvidia-smi` detects the GPU/driver; `nvcc --version` identifies the **installed compiler toolkit**.
-
-### 3. Create the Python environment
+### 3. Create a Python virtual environment
 
 ```powershell
 py -m venv .venv
@@ -226,19 +380,23 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-These commands do not require activating the virtual environment. If it already exists, you can simply use its `python.exe`.
+### 4. Prepare the real weather data
 
-### 4. Add and prepare your real Delhi CSV
-
-Put the original Open-Meteo download inside `data/`, update `FILES['delhi']` in `scripts/prepare_data.py` if necessary, then execute:
+Put the CSV in `data/`, update its filename in `scripts/prepare_data.py`, and run:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\prepare_data.py --dataset delhi --force
 ```
 
-`--force` regenerates the prepared binary and metadata after replacing the CSV. The script reports **real CSV rows**, **usable rows**, **skipped rows**, and all recognized column mappings. **Do not use** the legacy `scripts/generate_data.py` for this real-data experiment.
+Then check the source metadata:
 
-### 5. Check the software setup and build
+```powershell
+Get-Content .\data\prepared_delhi.json
+```
+
+Verify `rows_used`, `first_timestamp`, `last_timestamp`, source file, and all eight mappings against the dataset you intend to present.
+
+### 5. Compile the CPU/GPU executables
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\check_setup.py
@@ -246,246 +404,304 @@ Put the original Open-Meteo download inside `data/`, update `FILES['delhi']` in 
 Get-ChildItem .\build\
 ```
 
-Expected Windows executables:
+Expected binaries:
 
 ```text
-build/
-├── weather_serial.exe
-├── weather_omp.exe
-└── weather_cuda.exe
+build/weather_serial.exe
+build/weather_omp.exe
+build/weather_cuda.exe
 ```
 
-If `nvcc` is missing, the build script can still create the two CPU executables; run benchmarks with `--cuda off`.
+If `nvcc` is not available, the build script can still produce the Serial and OpenMP executables; use `--cuda off` for benchmarking.
 
-### 6. Run tests, benchmark, and dashboard
+### 6. Run tests and benchmark
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
 .\.venv\Scripts\python.exe scripts\benchmark.py --datasets delhi --rows 1000 10000 50000 100000 --passes 20 --threads 1 2 4 8 --repeats 5 --cuda on
+```
 
+The benchmark also includes the **full actual usable dataset size**; requested sizes larger than the input are skipped. No rows are fabricated or duplicated.
+
+### 7. Launch the updated dashboard
+
+```powershell
 .\.venv\Scripts\python.exe -m streamlit run dashboard.py
 ```
 
-Open **http://localhost:8501** in your browser.
+Open **http://localhost:8501**. Select the **🔗 Correlation** tab to explore all eight parameters. The dashboard automatically selects Delhi and the largest measured row count.
 
-> **Dataset replacement and tests:** Some original tests were written specifically for the earlier **2019–2025** download and assert its first/last timestamps. If you switched to a **2010–2025** file, update those fixture-specific timestamp expectations in `tests/test_project.py` to match the new CSV. Keep the essential numerical consistency tests intact.
-
-### One-command demo
-
-After installing the Python dependencies and making sure the CSV path is correct:
+### Optional one-command project demonstration
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_demo.ps1
 ```
 
-For a CPU-only demonstration:
+For a CPU-only test:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_demo.ps1 -CpuOnly
 ```
 
-The demo checks setup, builds programs, prepares the CSV, runs tests, benchmarks, and launches Streamlit. If you replaced the CSV, run `prepare_data.py --force` beforehand.
+The script checks setup, builds executables, prepares data, runs correctness tests and benchmarks, and launches Streamlit. If you just replaced the input CSV, force preprocessing before the demo.
 
-## How to run each implementation
+## Run the native algorithms
 
-Replace `N` with a **real row count not exceeding `rows_used`** in `data/prepared_delhi.json`. The example below uses 50,000 actual observations.
+These are direct execution examples after building the binaries and preparing data. Choose a row count that does not exceed the file's true `rows_used`.
 
 ```powershell
-# Serial C — 1 CPU thread
+# Serial C
 .\build\weather_serial.exe --input data\prepared_delhi.f32 --rows 50000 --passes 20
 
-# OpenMP — 1, 2, 4, or 8 CPU threads
+# OpenMP, eight CPU threads
 .\build\weather_omp.exe --input data\prepared_delhi.f32 --rows 50000 --passes 20 --threads 8
 
-# CUDA Atomic — GPU
+# CUDA atomic global reduction
 .\build\weather_cuda.exe --input data\prepared_delhi.f32 --rows 50000 --passes 20 --variant atomic
 
-# CUDA Shared Memory — GPU
+# CUDA shared-memory reduction
 .\build\weather_cuda.exe --input data\prepared_delhi.f32 --rows 50000 --passes 20 --variant shared
 ```
 
-Each program prints JSON with its method, row count, number of analysis passes, compute timing, and eight-element arrays of valid counts, means, and standard deviations. The CUDA executable additionally reports the device name and transfer-inclusive timing.
+The programs return machine-readable results with eight-element statistical outputs and timing measurements. The Python benchmark script orchestrates repeated runs and validates matching results.
 
-## Benchmarking and scaling experiments
+## Benchmark methodology and measured results
 
-### Compare all four methods
+### Reproducible benchmark command
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\benchmark.py --datasets delhi --rows 1000 10000 50000 100000 --passes 20 --threads 1 2 4 8 --repeats 5 --cuda on
 ```
 
-Options:
-
-| Argument | Meaning |
+| Option | Meaning |
 |---|---|
-| `--datasets delhi` | Use the configured Delhi CSV |
-| `--rows 1000 10000 50000 100000` | Test **real prefixes** of that many rows, where available |
-| `--passes 20` | Repeat the same analysis 20 times per invocation to obtain a measurable workload |
-| `--threads 1 2 4 8` | Compare OpenMP thread counts |
-| `--repeats 5` | Execute each configuration five times; summarize using the median |
-| `--cuda on` | Require both CUDA variants; fail if the GPU executable is missing |
+| `--datasets delhi` | Use the real Delhi weather source |
+| `--rows ...` | Use actual row prefixes, not synthetic input |
+| `--passes 20` | Repeat the same analysis computation 20 times per invocation |
+| `--threads 1 2 4 8` | Compare the CPU OpenMP configurations |
+| `--repeats 5` | Repeat each configuration and report median time |
+| `--cuda on` | Require CUDA GPU runs |
 | `--cuda off` | CPU-only benchmarking |
-| `--cuda auto` | Use CUDA if the executable is available |
-| `--force-preprocess` | Re-read and rebuild the prepared CSV data |
-
-The benchmark **automatically includes the entire number of usable rows**, and ignores requested row sizes larger than the actual dataset. It **never pads the dataset or generates extra weather observations**. Repeating the analysis with `--passes` increases the compute workload; it does **not** increase the number of unique timestamps.
-
-### Strong scaling
-
-Hold `--rows` and `--passes` fixed; change only the number of OpenMP threads. Ideally measure a sufficiently large workload, and avoid unnecessary background tasks while benchmarking.
-
-### Dataset-size scaling
-
-Compare `1,000`, `10,000`, `50,000`, `100,000`, and the full original CSV **when those sizes exist**. A larger input will not always yield a proportionally larger speedup, particularly for GPU kernels with launch and transfer overhead.
+| `--cuda auto` | Include CUDA when available |
+| `--force-preprocess` | Refresh binary preparation from the original source CSV |
 
 ### Performance equations
 
-For a given input size and number of passes:
+$$
+\mathrm{Speedup}=\frac{T_{\mathrm{Serial\ C}}}{T_{\mathrm{Parallel}}}
+$$
 
-```text
-Compute speedup = Serial C compute time / Parallel compute time
-OpenMP efficiency = Compute speedup / OpenMP thread count
-OpenMP efficiency (%) = 100 × OpenMP efficiency
-```
+$$
+\mathrm{OpenMP\ efficiency}=\frac{\mathrm{Speedup}}{\mathrm{CPU\ thread\ count}}
+$$
 
-CUDA **does not** use OpenMP's CPU-thread efficiency formula. Report GPU kernel-only performance and transfer-inclusive performance separately.
+Here both `T` values must correspond to the **same dataset subset, analysis passes and timing boundary**. CUDA is not evaluated using the OpenMP CPU-thread efficiency formula.
 
-## Measured performance results
+### Historical benchmark example
 
-The following numbers are from the project's **22 November 2026 Streamlit benchmark PDF export**, with **20 analysis passes** and the **median of five runs**. These are **compute-only measurements** on the project laptop, **not guaranteed timings for other machines**.
+The project previously exported these **compute-only** timings on its Windows laptop (20 analysis passes, median of five executions). **They are a historical dashboard snapshot, not verified fresh 2010–2025 correlation-run timings**:
 
-| Method | Compute time (ms) | Speedup vs Serial C |
+| Execution method | Compute time (ms) | Speedup vs Serial C |
 |---|---:|---:|
-| Serial C | **47.250** | **1.00×** |
-| OpenMP — 1 CPU thread | 39.536 | 1.20× |
-| OpenMP — 2 CPU threads | 22.395 | 2.11× |
-| OpenMP — 4 CPU threads | 17.200 | 2.75× |
-| OpenMP — 8 CPU threads | **14.846** | **3.18×** |
+| Serial C | 47.250 | 1.00× |
+| OpenMP, 1 thread | 39.536 | 1.20× |
+| OpenMP, 2 threads | 22.395 | 2.11× |
+| OpenMP, 4 threads | 17.200 | 2.75× |
+| OpenMP, 8 threads | 14.846 | 3.18× |
 | CUDA Atomic | 34.625 | 1.36× |
 | **CUDA Shared Memory** | **4.200** | **11.25×** |
 
-**Main observation:** CUDA Shared Memory was fastest in this measured configuration—approximately **11.25 times** the Serial C compute performance, or a **91.1% compute-time reduction**. OpenMP with eight threads achieved approximately **3.18×** speedup and **39.8%** parallel efficiency. CUDA Atomic was slower than eight-thread OpenMP in this experiment.
+These particular numbers exclude CSV parsing, and CUDA compute-only values exclude host-device transfer. **Do not copy them as new results for another source file or hardware configuration.** Rerun `scripts/benchmark.py` for your current input, and use the newly generated `results/summary.csv` for the authoritative measurement.
 
-> **Interpretation and reproducibility:** The exported dashboard had been manually labelled with **400,256 records**. That number was **not independently verified against the raw 2010–2025 CSV**. Treat the table above as *the timings shown in the supplied dashboard export*, not as proof that 400,256 unique weather timestamps were analyzed. Re-run the benchmark against your checked-in configuration to reproduce results for your actual current CSV. GPU host–device transfer is excluded from the `compute_ms` speedups shown here; compare `total_ms` separately for the broader GPU processing cost.
+### Timing boundaries
 
-## Weather analysis results
+- **CPU `compute_ms`**: in-memory Serial C/OpenMP weather-statistics processing; does not include CSV parsing or input file loading.
+- **CUDA `compute_ms`**: GPU computation and kernel/reduction work, excluding host-device transfer.
+- **CUDA `total_ms`**: includes measured host-device transfers and computation under the GPU benchmark's policy, but not complete disk-to-dashboard application time.
+- **Repeated passes**: extra computational work, **not** additional weather records.
 
-The supplied weather-analysis dashboard export displayed the following **approximate full-dataset averages** (rounded to two decimal places). They are included as **previous dashboard outputs**, not substitutes for checking the latest source CSV.
+### Strong scaling versus dataset scaling
 
-| Parameter | Average shown | Unit |
-|---|---:|---|
-| Temperature | 24.58 | °C |
-| Relative humidity | 61.83 | % |
-| Dew point | 15.23 | °C |
-| Apparent temperature | 25.72 | °C |
-| Precipitation | 0.08 | mm per hourly record |
-| Rainfall | 0.08 | mm per hourly record |
-| Snowfall | 0.00 | cm per hourly record |
-| Wind speed | 2.54 | m/s |
+- **OpenMP strong scaling:** keep the record count fixed and change the thread count.
+- **Dataset-size scaling:** keep the method and pass count fixed while increasing the authentic CSV row prefix.
+- **GPU performance:** consider both compute-only and transfer-inclusive timings before drawing conclusions about practical acceleration.
 
-For monthly trends, the dashboard uses **monthly averages** for temperature, humidity, dew point, apparent temperature and wind speed, and **monthly totals** for precipitation, rainfall and snowfall. A zero value for snowfall is different from a missing snowfall reading.
+## Correlation calculation and interpretation
 
-## Streamlit dashboard
+### Processing pipeline
 
-Start it with:
+The **Correlation** tab works as follows:
 
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run dashboard.py
+```text
+1. Select the Delhi dataset and its largest available benchmark row count (automatic)
+2. Read fresh prepared_delhi.f32 records, if available
+   Otherwise read and map the actual original CSV
+3. Convert the numeric eight-column matrix to float64 for correlation arithmetic
+4. Compute Pearson correlations with pairwise omission of missing measurements
+5. Compute number of shared valid observations per variable pair
+6. Mark constant/unavailable correlations as N/A
+7. Create the heatmap, ranked bars, scatter plot and pairwise table
+8. Provide two CSV exports for independent inspection
 ```
 
-Open **http://localhost:8501**.
+All coefficients are calculated **from the dataset used in that Streamlit session**. The dashboard does not embed the illustrative five-variable correlation matrix found in the original reference notebook.
 
-The dashboard presents:
+### Interpretation guidelines for your project report or viva
 
-- **Real Delhi weather measurements** with mean values, valid counts, missing-data coverage, and original historic time-series trends.
-- **Execution & speedup** charts comparing Serial C, OpenMP, and CUDA implementations.
-- **HPC scaling** plots showing thread-count scaling, parallel efficiency, and performance versus authentic CSV row count.
-- **Files, validation & exports** showing source mappings, data provenance, and downloadable benchmark results.
+| Observation | Appropriate explanation |
+|---|---|
+| Temperature correlates with apparent temperature | The two definitions can vary together; use the measured coefficient to describe the strength |
+| Relative humidity correlates negatively or positively with another variable | Report the **observed sign and magnitude**, not a universal rule |
+| Precipitation and rainfall exhibit association | They are related weather quantities and may be highly correlated, depending on source definitions |
+| Snowfall correlations show `N/A` | A constant zero-snowfall column has zero standard deviation; Pearson correlation is undefined |
+| A large coefficient is observed | This establishes statistical linear association **in these records**, not a causal mechanism |
 
-The charts deliberately use **dark axis labels on a light plot background** so they remain legible in Streamlit's dark theme and in HTML/PDF printouts.
+### Exported correlation tables
 
-## Validation and testing
+Within the Correlation tab, use:
 
-The system is designed to compare **identical numeric inputs** for each execution strategy. The benchmark checks:
+- **Download 8 × 8 correlation matrix** → `weather_correlations_<dataset>_<rows>_rows.csv`
+- **Download all 28 parameter pairs** → `weather_correlation_pairs_<dataset>_<rows>_rows.csv`
 
-- Exactly **eight result positions** for each weather parameter.
-- Equal **valid observation counts** across implementations.
-- Agreement of mean values within the configured floating-point tolerance (small summation-order differences are expected).
-- A corresponding Serial C baseline for each dataset size.
+These are downloaded interactively and **are not automatically saved by `scripts/benchmark.py`**. Correlation is a separate visualization-stage analysis using Pandas/NumPy. The native C/CUDA benchmark files retain their original meaning.
 
-The test suite is run with:
+If you need exact figure values in your academic report, **export the matrix from the 2010–2025 dashboard session**. Do not substitute coefficients from the separately available 2019–2025 source and label them as full-period results.
+
+## Validation and reproducibility
+
+The project verifies that the Serial C and parallel engines receive **identical prepared input rows**, and checks agreement of valid counts and statistical outputs within a suitable numerical tolerance. Floating-point reductions may differ slightly due to accumulation order.
+
+For the correlation module, the key checks are:
+
+- The matrix contains all eight expected variables in the agreed column order.
+- The coefficient matrix is symmetric (up to floating-point rounding).
+- Every defined Pearson `r` lies between `−1` and `+1`.
+- Pairwise valid counts do not exceed the total input record count.
+- Missing and constant variables do **not** receive invented numerical coefficients.
+- The displayed scatter plot may sample points, but correlations and fitted lines use the full valid paired set.
+
+Run automated project tests with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-**Dataset-specific test warning:** The original unit test includes first/last-timestamp assertions for an earlier Open-Meteo CSV. When using another download, review and update those expectations without removing algorithmic correctness tests.
-
-### Timing boundaries
-
-- **Serial C / OpenMP `compute_ms`:** timed in-memory weather analysis, excluding CSV parsing and binary file I/O.
-- **CUDA `compute_ms`:** GPU resets, kernel launches, and device computation, **excluding** host-to-device and device-to-host copies.
-- **CUDA `total_ms`:** measured transfer-inclusive processing around the device copies and computation, but excludes CSV parsing and GPU allocation overhead.
-- **CPU `total_ms`:** currently the CPU compute time; it is **not an end-to-end disk-to-result measurement**.
-
-Because of these different boundaries, **CPU and CUDA `total_ms` should not be labelled identical full-application end-to-end timings**.
+**Dataset-version warning:** Some tests from the original project archive were written for a **2019–2025** CSV. If you use a different **2010–2025** download, update test assertions tied specifically to the old filename and date range while retaining numerical correctness tests.
 
 ## Project structure
 
 ```text
 windows_hpc/
-├── dashboard.py                 # Streamlit weather + HPC visualizations
-├── requirements.txt             # NumPy, Pandas, Plotly, Streamlit
+├── README.md                     # This complete GitHub documentation
+├── dashboard.py                  # Streamlit: HPC + weather + correlation
+├── requirements.txt              # Python dependencies
 ├── .gitignore
-├── README.md
-├── MENTOR_DEMO.md
+├── MENTOR_DEMO.md                 # Optional presentation/demo guide
 ├── data/
 │   ├── .gitkeep
-│   ├── column_map.example.json
-│   ├── YOUR_DELHI_WEATHER.csv    # Download separately (gitignored)
-│   ├── prepared_delhi.f32       # Generated binary (gitignored)
-│   └── prepared_delhi.json      # Dataset metadata (gitignored)
+│   ├── YOUR_DELHI_WEATHER.csv     # Original download (usually gitignored)
+│   ├── prepared_delhi.f32        # Generated 8-column binary data (gitignored)
+│   ├── prepared_delhi.json       # Generated input metadata (gitignored)
+│   └── column_map.example.json  # Optional mapping example
 ├── src/
-│   ├── weather_cpu.c            # Shared Serial C / OpenMP implementation
-│   └── weather_cuda.cu          # CUDA Atomic + Shared Memory kernels
+│   ├── weather_cpu.c             # Single-thread C and OpenMP
+│   └── weather_cuda.cu           # CUDA Atomic / Shared kernels
 ├── scripts/
-│   ├── build.cmd                # MSVC + nvcc native build
-│   ├── check_setup.py           # Verify Windows tools, packages and input
-│   ├── prepare_data.py          # Real CSV preprocessing
-│   ├── benchmark.py             # Timings, validation, scaling, exports
-│   └── run_demo.ps1             # End-to-end Windows demonstration
+│   ├── prepare_data.py           # CSV parsing and numerical preparation
+│   ├── build.cmd                 # Windows MSVC + nvcc build
+│   ├── check_setup.py            # Environment checks
+│   ├── benchmark.py              # Measured HPC runs, validation and exports
+│   └── run_demo.ps1              # Guided one-command demonstration
 ├── tests/
-│   └── test_project.py          # Real-data and native correctness checks
-├── build/                       # Generated .exe files (gitignored)
-└── results/                     # Generated reports (gitignored)
-    ├── raw_runs.csv
+│   └── test_project.py           # Correctness test suite
+├── build/                         # Compiled executables (gitignored)
+│   ├── weather_serial.exe
+│   ├── weather_omp.exe
+│   └── weather_cuda.exe
+└── results/                       # Generated data, usually gitignored
     ├── summary.csv
+    ├── raw_runs.csv
     ├── parameter_stats.csv
     ├── summary.json
     └── dashboard.html
 ```
 
-The older repository copy may still contain a legacy `scripts/generate_data.py` from the original synthetic-grid benchmark. **It is not used in this real-weather analysis workflow.**
+**Correlation implementation note:** You do **not** need an additional `correlation_analysis.py` for the current dashboard because its correlation functions are already in `dashboard.py`. A separate script is optional for command-line-only analysis, but not required for Streamlit.
 
-## Exports
+## Output files and sharing
 
-| File | Contents |
+### Benchmark outputs
+
+| File | Description |
 |---|---|
-| `results/raw_runs.csv` | Every individual timing trial |
-| `results/summary.csv` | Median compute time, transfer-inclusive time, speedup, thread efficiency, dataset size |
-| `results/parameter_stats.csv` | Eight-variable means, standard deviations, valid counts, missing counts, and coverage |
-| `results/summary.json` | Benchmark configuration and original-source metadata |
-| `results/dashboard.html` | Interactive plots and tables readable in a browser |
+| `results/summary.csv` | Aggregated measured timings, speedups, efficiency and dataset sizes |
+| `results/raw_runs.csv` | Individual benchmark trials |
+| `results/parameter_stats.csv` | Per-parameter statistics and coverage |
+| `results/summary.json` | Benchmark configuration, source metadata and CSV mappings |
+| `results/dashboard.html` | Generated interactive HTML performance report |
 
-The Streamlit dashboard provides buttons to download the CSV/JSON/HTML outputs. To create a PDF report, open the generated HTML report in Chrome or Edge, press **Ctrl + P**, and choose **Save as PDF**.
+The **general export/download controls were intentionally removed from the dashboard's last tab**. These files may still exist on disk because the benchmark script generates them. Correlation retains its own two CSV download buttons inside the Correlation tab.
+
+### Share a local demonstration via Cloudflare Tunnel
+
+First start the dashboard in one VS Code terminal:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py
+```
+
+Then open a **second** PowerShell terminal and run:
+
+```powershell
+cloudflared tunnel --url http://localhost:8501
+```
+
+Cloudflare prints a temporary public `https://...trycloudflare.com` link, which can be shared with viewers. Keep the laptop, Streamlit, and the tunnel process running. **Anyone with the public link may be able to access the dashboard and correlation CSV downloads.** A Quick Tunnel is for demonstrations and does not guarantee long-term uptime.
+
+### Publish on GitHub
+
+The project's `.gitignore` normally excludes `.venv/`, compiled executables, local weather CSVs, prepared binaries, and generated results. GitHub users may therefore need to **download the real weather CSV and run preprocessing/benchmarking** before the dashboard can display data. If publishing example results or dataset snapshots, check the data source's licensing/attribution terms and document the exact source interval.
 
 ## Troubleshooting
 
 <details>
-<summary><strong><code>.venv\Scripts\python.exe</code> is not recognized</strong></summary>
+<summary><strong>Dashboard says benchmark files are missing</strong></summary>
 
-The virtual environment does not exist in the current project directory, or you are running PowerShell from the wrong folder.
+Generate `results/summary.csv`, `results/parameter_stats.csv`, and `results/summary.json` using the current real-CSV benchmark script. Do not mix legacy synthetic-grid results with this version.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\prepare_data.py --dataset delhi --force
+.\.venv\Scripts\python.exe scripts\benchmark.py --datasets delhi --passes 20 --cuda on
+```
+
+</details>
+
+<details>
+<summary><strong>Correlation tab cannot load source records</strong></summary>
+
+Make sure `data/prepared_delhi.f32` or the real CSV exists, and that `results/summary.json` maps the same source file. If the CSV has changed, preprocess and benchmark it again so that the row counts and metadata match.
+
+</details>
+
+<details>
+<summary><strong>Why does it show 21 / 28 defined pairs?</strong></summary>
+
+The full dataset currently has a constant snowfall column. Pearson correlation requires nonzero variance for **both** variables. Seven cross-parameter pairs containing snowfall are undefined, leaving 21 defined pairs. This is correct handling, not a missing feature.
+
+</details>
+
+<details>
+<summary><strong>Why does snowfall appear as N/A in the heatmap?</strong></summary>
+
+A constant zero column does not have a meaningful Pearson coefficient. The same mathematical rule also applies to the snowfall-versus-snowfall diagonal entry.
+
+</details>
+
+<details>
+<summary><strong>PowerShell cannot find the Python virtual environment</strong></summary>
+
+Ensure you are in the folder containing `.venv` and `dashboard.py`. Create the environment if necessary:
 
 ```powershell
 py -m venv .venv
@@ -495,112 +711,90 @@ py -m venv .venv
 </details>
 
 <details>
-<summary><strong>The original Open-Meteo CSV cannot be found</strong></summary>
+<summary><strong>CSV preprocessing: `ValueError: assignment destination is read-only`</strong></summary>
 
-Place the CSV inside `data/`. Change `FILES['delhi']` in `scripts/prepare_data.py` to the exact file name (including spaces or parentheses), then run:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\prepare_data.py --dataset delhi --force
-```
-
-If the file name changed, update any old name hardcoded in `scripts/check_setup.py` too.
-
-</details>
-
-<details>
-<summary><strong><code>ValueError: assignment destination is read-only</code></strong></summary>
-
-With newer NumPy/Pandas versions, the `prepare_data.py` numeric array must be writable. In the parameter-processing section, use:
+In `scripts/prepare_data.py`, obtain a writable NumPy array before replacing invalid entries:
 
 ```python
 arr = series.to_numpy(dtype=np.float64, na_value=np.nan, copy=True)
 arr[~np.isfinite(arr)] = np.nan
 ```
 
-The `copy=True` change fixes this error without altering the source CSV.
+The `copy=True` ensures the array is writable.
 
 </details>
 
 <details>
-<summary><strong>CUDA 11.7 reports an unsupported Microsoft Visual Studio compiler</strong></summary>
+<summary><strong>`nvcc` is missing or CUDA compilation fails</strong></summary>
 
-This project was built successfully with **CUDA 13.2** and **MSVC 14.44**. Check:
+Check the NVIDIA driver and CUDA Toolkit. On the tested GTX 1650 configuration, CUDA Toolkit 13.2 and MSVC 14.44 were the known working combination:
 
 ```powershell
 nvcc --version
+nvidia-smi
+.\scripts\build.cmd
 ```
 
-Use a compatible Toolkit/compiler combination; do not rely on `-allow-unsupported-compiler` as the primary fix.
+A different GPU architecture or a newer compiler/toolkit may require adjusting build settings.
 
 </details>
 
 <details>
-<summary><strong><code>cudafe++</code> crashes with <code>0xC0000005</code></strong></summary>
+<summary><strong>`cudafe++` fails with code `0xC0000005`</strong></summary>
 
-This occurred when CUDA 13.2 selected a newer MSVC toolset. Install **MSVC 14.44** using Visual Studio Installer, then allow `scripts/build.cmd` to select it (or configure `HPC_MSVC_VERSION`). The working build showed:
-
-```text
-Selected MSVC: 14.44.35207
-=== Building serial CPU ===
-=== Building OpenMP CPU ===
-=== Building CUDA for GTX 1650 [sm_75] ===
-=== Build finished: .\build\ ===
-```
+The project previously encountered this when a newer MSVC toolset was selected. Install MSVC 14.44 and let `build.cmd` prefer it, or explicitly configure `HPC_MSVC_VERSION` for a compatible installed toolset.
 
 </details>
 
 <details>
-<summary><strong>Serial/OpenMP runs, but <code>weather_cuda.exe</code> is missing</strong></summary>
+<summary><strong>Tests fail after moving from 2019–2025 to 2010–2025</strong></summary>
 
-CUDA did not compile or `nvcc` is not on PATH. Check `nvcc --version`, install/repair the Toolkit and MSVC toolset, and rerun `scripts\build.cmd`. Until then, use `--cuda off` in the benchmark.
-
-</details>
-
-<details>
-<summary><strong>Dashboard is empty or has older grid-based results</strong></summary>
-
-Run the **current real-CSV** `prepare_data.py` and `benchmark.py` to regenerate `results/summary.csv`, `parameter_stats.csv`, and `summary.json`, then restart Streamlit. Do not mix the old synthetic-grid exports with the real-CSV dashboard.
+Older dataset-specific tests contain timestamp expectations for the earlier file. Correct those expectations to match the actual new CSV without weakening CPU/GPU numerical comparison tests.
 
 </details>
 
 <details>
-<summary><strong>Automated test fails because the CSV now starts in 2010</strong></summary>
+<summary><strong>The Cloudflare URL is slow or shows a 502 error</strong></summary>
 
-The earlier test fixture assumed a 2019–2025 source file. Update the explicit date assertions in `tests/test_project.py` to match the new input. Retain checks for column mappings, unit conversion, file size, Serial/OpenMP agreement, and CUDA agreement.
+Make sure Streamlit is still running and reachable at `http://localhost:8501`, and that the Cloudflare Tunnel uses the same port. Both terminals must remain open.
 
 </details>
 
-## Limitations and future work
+## Limitations and future improvements
 
-**Current limitations**
+**Current limitations:**
 
-- Historical statistical analysis is implemented, **not** trained next-day weather forecasting.
-- The reported speedup depends on workload size, machine, thread count, thermals, and the boundary used for timing.
-- Single-location hourly records have a finite size; large benchmark row counts must not be achieved by inventing or repeating timestamps.
-- The published dashboard screenshot had a manually changed record-count label; readers should verify counts from source CSV metadata.
-- Benchmark outputs are locally generated and excluded by `.gitignore` unless deliberately exported and published.
+- There is **no trained predictive weather forecast model**; results cover historical descriptive analysis and relationships.
+- Pearson `r` describes **linear** association, is sensitive to some outliers, and cannot prove causation. Shared seasonal trends can also create apparent correlations.
+- Constant snowfall leads to undefined pairwise correlations for this Delhi dataset; `N/A` is intentional.
+- Correlation is calculated by Pandas/NumPy on the dashboard side, **not** accelerated or benchmarked by CUDA in the current project.
+- HPC timing results are dependent on workload, hardware, compiler, thread count, operating conditions and timing definition.
+- The dashboard is local-first; public sharing using a tunnel depends on the host computer remaining online.
 
-**Possible improvements**
+**Potential future enhancements:**
 
-- Add a validated 1–24-hour temperature forecasting model using a chronological train/validation/test split, plus MAE/RMSE.
-- Measure true end-to-end CSV-load-to-result times and separately chart PCIe transfer costs.
-- Add confidence intervals, throughput, CPU utilization, and GPU utilization in benchmark reports.
-- Add verified multi-location Delhi NCR data for regional comparisons.
-- Compare additional CUDA reduction strategies and investigate when GPU overhead outweighs parallel benefits.
+- Add a **native parallel correlation kernel** (Serial C, OpenMP and CUDA) that computes pairwise cross-products, with correctness and performance comparisons.
+- Analyze correlations by **season or month**, and compare them with full-period correlations.
+- Add lagged correlations, e.g. whether humidity or wind tends to lead temperature changes.
+- Evaluate Spearman correlation as a nonlinear-monotonic complement to Pearson.
+- Measure full transfer-inclusive and disk-to-result timings, with GPU profiling and confidence intervals.
+- Train a true forecast model with chronological train/validation/test splits, and evaluate MAE/RMSE against a persistence baseline.
+- Extend the project to multiple authentic weather locations without duplicating or inventing records.
 
 ## References and acknowledgements
 
-- [Open-Meteo — Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api): source of the historical weather data.
-- [OpenMP Specification](https://www.openmp.org/specifications/): shared-memory CPU parallel programming.
-- [NVIDIA CUDA C++ Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/): CUDA execution, atomics and shared memory.
-- [NVIDIA CUDA Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/): GPU benchmarking and optimization.
-- [Streamlit Documentation](https://docs.streamlit.io/): interactive dashboard framework.
-- [Plotly Python Documentation](https://plotly.com/python/): interactive performance/weather visualizations.
-- [Original reference repository: Asha21697/weather-forecasting-openmp-mpi](https://github.com/Asha21697/weather-forecasting-openmp-mpi): initial weather-analysis/HPC project reference. The Windows Serial/OpenMP/CUDA/Streamlit workflow documented here is a separate adaptation and extension.
+- [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api) — historical weather source.
+- [OpenMP Specification](https://www.openmp.org/specifications/) — CPU parallelism.
+- [NVIDIA CUDA Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/) — CUDA execution and reductions.
+- [NVIDIA CUDA Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/) — GPU performance and benchmarking.
+- [Pandas `.DataFrame.corr()` documentation](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.corr.html) — Pearson correlation computation.
+- [NumPy Documentation](https://numpy.org/doc/stable/) — numeric arrays and calculations.
+- [Plotly Python](https://plotly.com/python/) — interactive heatmaps, bar charts and scatter plots.
+- [Streamlit Documentation](https://docs.streamlit.io/) — interactive UI and charts.
+- [Original reference project: `Asha21697/weather-forecasting-openmp-mpi`](https://github.com/Asha21697/weather-forecasting-openmp-mpi) — background/reference repository; the native Windows CUDA implementations, dashboard and correlation integration are documented as extensions of the working project.
 
-**Academic project:** M.Tech Computer Science and Engineering, Jaypee Institute of Information Technology, Noida.  
-**Implementation and integration:** Aryan Choudhary.
+**Academic context:** M.Tech Computer Science and Engineering — Jaypee Institute of Information Technology, Noida.
 
 ---
 
-*Benchmarks are measurements, not promises: use the scripts above to obtain fresh results on your own hardware and dataset.*
+*The code uses real historical weather measurements for analysis. Run the scripts against your current local CSV to reproduce both weather statistics and HPC timings; use the Correlation tab to generate the corresponding pairwise coefficients.*
